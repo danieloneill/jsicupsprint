@@ -41,7 +41,7 @@ unsigned char * base64_decode(const unsigned char *src, size_t len,
                 return NULL;
 
         olen = count / 4 * 3;
-        pos = out = malloc(olen);
+        pos = out = (unsigned char *)malloc(olen);
         if (out == NULL)
                 return NULL;
 
@@ -104,7 +104,7 @@ int image2pdf( int width, double dpi, const char *indata, size_t inlen, char **o
     nimg->x_resolution = dpi;
     nimg->y_resolution = dpi;
 
-    *outdata = ImageToBlob( info, nimg, outlen, &exception );
+    *outdata = (char *)ImageToBlob( info, nimg, outlen, &exception );
     DestroyImage(nimg);
     DestroyImageInfo(info);
 
@@ -181,7 +181,37 @@ my_get_dests(cups_ptype_t type, cups_ptype_t mask,
   return (user_data.num_dests);
 }
 
-void getMedia(cups_dest_t *dest)
+struct s_catbuf {
+	char *str;
+	int alloc;
+	int len;
+};
+
+struct s_catbuf *catgrow(struct s_catbuf *buf, const char *addon)
+{
+	if( !buf )
+	{
+		buf = (struct s_catbuf *)malloc( sizeof(struct s_catbuf) );
+		buf->str = (char*)malloc(512);
+		buf->str[0] = '\0';
+		buf->alloc = 512;
+		buf->len = 0;
+	}
+
+	int inlen = strlen(addon);
+	if( buf->alloc <= buf->len + inlen )
+	{
+		int nlen = buf->alloc + inlen + 512;
+		buf->str = (char*)realloc( buf->str, nlen );
+		buf->alloc = nlen;
+	}
+	strcat( buf->str, addon );
+	buf->len += inlen;
+	buf->str[ buf->len ] = '\0';
+	return buf;
+}
+
+char *getMedia(cups_dest_t *dest)
 {
 	cups_dinfo_t *info = cupsCopyDestInfo(CUPS_HTTP_DEFAULT, dest);
 
@@ -211,8 +241,12 @@ void getMedia(cups_dest_t *dest)
         if( tag != IPP_TAG_RESOLUTION )
         {
             fprintf(stderr, "Didn't get a resolution tag for some reason.\n");
-            return;
+            return NULL;
         }
+
+	struct s_catbuf *obuf = catgrow(NULL, "\"uri\": \"" );
+	obuf = catgrow(obuf, printer_uri );
+	obuf = catgrow(obuf, "\", \"resolutions\": [ " );
         for( int x=0; x < rescount; x++ )
         {
             ipp_res_t units;
@@ -224,33 +258,95 @@ void getMedia(cups_dest_t *dest)
                 hres = (int)(hres * 2.54);
                 yres = (int)(yres * 2.54);
             }
-            printf("Resolution %d: %d x %d\n", x, hres, yres);
+	    if( x > 0 )
+		    obuf = catgrow(obuf, ", ");
+	    char fmtbuf[512];
+	    snprintf( fmtbuf, sizeof(fmtbuf), "{ \"hres\":%d, \"yres\":%d }", hres, yres );
+	    obuf = catgrow(obuf, fmtbuf);
         }
         ippDelete(response);
+	obuf = catgrow( obuf, " ], ");
 
 	cups_size_t size;
 	int i;
 	int flags = 0;
 	int count = cupsGetDestMediaCount(CUPS_HTTP_DEFAULT, dest, info, flags);
-	printf("Printer supports %d sizes.\n", count);
 	
+	obuf = catgrow(obuf, "\"pageSizes\": [ ");
+	char isfirst = 1;
 	for (i = 0; i < count; i ++)
 	{
 		if (cupsGetDestMediaByIndex(CUPS_HTTP_DEFAULT, dest, info, i, flags, &size))
 		{
-			printf(" ---------- \n");
-			//printf("%s:\n", size.name);
-			printf(" Width: %.2fin\n", size.width / 2540.0);
-			printf("Length: %.2fin\n", size.length / 2540.0);
-			printf("Bottom: %.2fin\n", size.bottom / 2540.0);
-			printf("  Left: %.2fin\n", size.left / 2540.0);
-			printf(" Right: %.2fin\n", size.right / 2540.0);
-			printf("   Top: %.2fin\n", size.top / 2540.0);
+			if( isfirst != 1 )
+		    		obuf = catgrow(obuf, ", ");
+
+			char bleh[1024];
+			snprintf( bleh, sizeof(bleh), "{ \"width\": %.2f, \"length\": %.2f, \"bottom\": %.2f, \"left\": %.2f, \"right\": %.2f, \"top\": %.2f }",
+					size.width / 2540.0,
+					size.length / 2540.0,
+					size.bottom / 2540.0,
+					size.left / 2540.0,
+					size.right / 2540.0,
+					size.top / 2540.0 );
+	    		obuf = catgrow(obuf, bleh);
+			isfirst = 0;
 		}
 	}
+	obuf = catgrow( obuf, " ]");
 
         cupsFreeDestInfo(info);
         httpClose(http);
+
+	char *ostr = obuf->str;
+	free( obuf );
+	return ostr;
+}
+
+int isnum(const char *str)
+{
+	int len = strlen(str);
+	for( int x=0; x < len; x++ )
+		if( str[x] < '0' || str[x] > '9' )
+			return -1;
+	return 0;
+}
+
+char *destOptionsToJSON(cups_dest_t *dest)
+{
+	// HUR DUR
+	cups_option_t *hur = dest->options;
+	struct s_catbuf *obuf = catgrow(NULL, "{ " );
+	char sep[3] = { '\0', '\0', '\0' };
+	for( int y=0; y < dest->num_options; y++ )
+	{
+	    char derp[1024], bluh[64];
+
+            // Hur the dur before we herp the derp:
+	    int vlen = strlen(hur->value);
+	    int cur = 0;
+	    for( int x=0; x < vlen && x < 63; x++ )
+	    {
+		if( hur->value[x] != '\\' && hur->value[x] != '"' ) bluh[cur++] = hur->value[x];
+		bluh[cur] = 0;
+            }
+
+	    if( strcmp(bluh, "true") == 0 || strcmp(bluh, "false") == 0 )
+	    	snprintf(derp, sizeof(derp), "%s\"%s\": %s", sep, hur->name, bluh);
+	    else if( isnum(bluh) == 0 )
+	    	snprintf(derp, sizeof(derp), "%s\"%s\": %s", sep, hur->name, bluh);
+	    else
+	    	snprintf(derp, sizeof(derp), "%s\"%s\": \"%s\"", sep, hur->name, bluh);
+	    obuf = catgrow(obuf, derp);
+	    sep[0] = ',';
+	    sep[1] = ' ';
+	    hur++;
+	}
+
+	obuf = catgrow(obuf, " }");
+	char *ostr = obuf->str;
+	free( obuf );
+	return ostr;
 }
 
 int printTo(cups_dest_t *dest, char *pdfdata, size_t length)

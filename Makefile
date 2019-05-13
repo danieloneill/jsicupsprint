@@ -1,4 +1,4 @@
-CDCMD=../jsish -c
+CDCMD=jsish -c
 #CC=clang -fsanitize=address 
 
 cups.so: cups.c
@@ -14,3 +14,6 @@ cupssh: cups.c
 
 clean:
 	rm -f cups.c cups.so cups cupssh
+
+install: cups.so
+	install cups.so /usr/local/lib/jsi/

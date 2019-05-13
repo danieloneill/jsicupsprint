@@ -25,6 +25,17 @@ I know.. I know... dots per inch, width in mm, but that's how the Citizen CT-S31
 
 This doesn't ask for page height because it's made to print to a thermal printer. You know, a receipt printer. For a store, see?
 
-Don't like it?! Well... hack the code. It's super simple. The glue is in *cups.jsc* and the meat is in *cupsinc.c*.
+Don't like it?! Well... hack the code. It's super simple. The glue is in *cups.jsc* and the meat is in *cupsinc.c*. Dogspeed.
 
-Dogspeed.
+What else does this pile do? Well, get a list of printers and whatever:
+```
+require('cups');
+var myarray = cups.printerlist();
+```
+
+Cool, but let's figure out the dimensions of thin wooden slices this machine is capable of spraying crushed insect juice onto:
+```
+var details = cups.printerinfo('My Printer');
+```
+
+And ... that's about all it can do.
