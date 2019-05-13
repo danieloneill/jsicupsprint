@@ -1,0 +1,36 @@
+#!/usr/local/bin/jsish -c %s
+// CUPS interface
+
+code Header = {
+#include <string.h>
+};
+
+extension cups = { // Extension to print via CUPS.
+
+    // Anything outside of a 'function' definition is C-code.
+    #include "cupsinc.c"
+    
+    function print(dest:string, b64data:string, resolution:number, widthmm:number):number { // Return capability
+        Jsi_Number rval = 0;
+        size_t size;
+
+        unsigned char *nbuf = base64_decode(b64data, strlen(b64data), &size);
+        if( !nbuf )
+            RETURN(rval);
+    
+        char *obuf;
+        size_t olen;
+        double widthcm = widthmm * 0.01;
+        rval = image2pdf( (widthcm / 2.54), resolution, nbuf, size, &obuf, &olen );
+        free( nbuf );
+
+        if( 0 == rval )
+        {    
+            ret = printPDF(dest, obuf, olen);
+            free( obuf );
+        }
+    
+        RETURN(rval);
+    }
+};
+
